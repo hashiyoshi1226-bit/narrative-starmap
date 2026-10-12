@@ -5,36 +5,62 @@ import matplotlib.pyplot as plt
 from sklearn.manifold import MDS
 import re
 import matplotlib.font_manager as fm
+import zipfile
+import io
 
 st.set_page_config(page_title="Narrative Star Map Dashboard", layout="wide")
 
 st.title("✨ 食のナラティブ・インタラクティブ星図ビュワー")
 st.sidebar.header("データと表示設定")
 
-uploaded_fixed = st.sidebar.file_uploader("ナラティブ/座標データ (Excel)", type=["xlsx", "xls"])
+# CSV形式でのアップロードも許可するように変更
+uploaded_fixed = st.sidebar.file_uploader("ナラティブ/座標データ (Excel または CSV)", type=["xlsx", "xls", "csv"])
 uploaded_demo = st.sidebar.file_uploader("イベント参加者データ (CSV)", type=["csv"])
+
+# 破損したエクセルファイルを自動修復する関数
+def load_excel_safe(uploaded_file):
+    try:
+        return pd.ExcelFile(uploaded_file)
+    except Exception as e:
+        if "stylesheet" in str(e).lower() or "invalid xml" in str(e).lower():
+            # 破損したスタイルシート(XML)を空の安全なものに置き換えてメモリ上で自動修復
+            uploaded_file.seek(0)
+            safe_io = io.BytesIO()
+            with zipfile.ZipFile(uploaded_file, 'r') as zin:
+                with zipfile.ZipFile(safe_io, 'w') as zout:
+                    for item in zin.infolist():
+                        if item.filename == 'xl/styles.xml':
+                            minimal_styles = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"></styleSheet>'
+                            zout.writestr(item, minimal_styles)
+                        else:
+                            zout.writestr(item, zin.read(item.filename))
+            safe_io.seek(0)
+            return pd.ExcelFile(safe_io)
+        raise e
 
 if uploaded_fixed and uploaded_demo:
     try:
-        xl = pd.ExcelFile(uploaded_fixed)
-        # 使えるシートを自動探査
-        target_sheet = None
-        for s in xl.sheet_names:
-            if 'coordinate' in s.lower() or 'coord' in s.lower() or 'データ' in s or '座標' in s or 'sheet' in s.lower():
-                target_sheet = s
-                break
-        if not target_sheet:
-            target_sheet = xl.sheet_names[0]
+        # CSVかExcelかで読み込み処理を分岐
+        if uploaded_fixed.name.endswith('.csv'):
+            df_fixed = pd.read_csv(uploaded_fixed)
+        else:
+            xl = load_excel_safe(uploaded_fixed)
+            target_sheet = None
+            for s in xl.sheet_names:
+                if 'coordinate' in s.lower() or 'coord' in s.lower() or 'データ' in s or '座標' in s or 'sheet' in s.lower():
+                    target_sheet = s
+                    break
+            if not target_sheet:
+                target_sheet = xl.sheet_names[0]
+            df_fixed = pd.read_excel(xl, sheet_name=target_sheet)
             
-        df_fixed = pd.read_excel(uploaded_fixed, sheet_name=target_sheet)
         df_demo = pd.read_csv(uploaded_demo)
         
-        # カラム名に X, Y (または X_座標, Y_座標) がすでに含まれているかチェック
+        # 座標の有無をチェック
         cols_lower = [str(c).lower() for c in df_fixed.columns]
         has_precomputed_coords = any('x' in c for c in cols_lower) and any('y' in c for c in cols_lower)
         
         if has_precomputed_coords:
-            # すでに座標がある場合
             x_col = [c for c in df_fixed.columns if 'x' in str(c).lower()][0]
             y_col = [c for c in df_fixed.columns if 'y' in str(c).lower()][0]
             no_col = [c for c in df_fixed.columns if 'no' in str(c).lower() or '番号' in str(c)][0]
@@ -47,7 +73,6 @@ if uploaded_fixed and uploaded_demo:
                 'Y': pd.to_numeric(df_fixed[y_col], errors='coerce')
             }).dropna(subset=['No'])
         else:
-            # スコアからMDSで計算する場合
             val_cols = df_fixed.columns[2:12] if len(df_fixed.columns) >= 12 else df_fixed.columns[2:]
             X_data = df_fixed[val_cols].replace('評価不能', 3).apply(pd.to_numeric, errors='coerce').fillna(3)
             
@@ -63,7 +88,6 @@ if uploaded_fixed and uploaded_demo:
             
         coords_dict = df_coords.set_index('No').to_dict('index')
         
-        # 参加者データのカラム自動判定
         group_col = [c for c in df_demo.columns if 'group' in c.lower() or 'グループ' in c][0]
         part_col = [c for c in df_demo.columns if 'part' in c.lower() or '参加者' in c or 'id' in c.lower()][0]
         my_card_col = [c for c in df_demo.columns if 'my' in c.lower() or '選んだ' in c][0]
@@ -71,11 +95,9 @@ if uploaded_fixed and uploaded_demo:
         
         selected_group = st.sidebar.selectbox("表示するグループを選択", sorted(df_demo[group_col].unique()))
         
-        # 描画処理
         plt.style.use('dark_background')
         fig, ax = plt.subplots(figsize=(12, 12))
         
-        # 背景の星図
         ax.scatter(df_coords['X'], df_coords['Y'], c='#FFFFFF', alpha=0.3, s=22, edgecolors='none', zorder=1)
         
         group_data = df_demo[df_demo[group_col] == selected_group]
@@ -134,4 +156,4 @@ if uploaded_fixed and uploaded_demo:
     except Exception as e:
         st.error(f"データの処理中にエラーが発生しました: {e}")
 else:
-    st.info("左側のサイドバーから「ナラティブ/座標データ（Excel）」と「イベント参加者データ（CSV）」をアップロードしてください。")
+    st.info("左側のサイドバーから「ナラティブ/座標データ（Excel または CSV）」と「イベント参加者データ（CSV）」をアップロードしてください。")
