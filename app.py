@@ -4,26 +4,23 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.manifold import MDS
 import re
-import matplotlib.font_manager as fm
 import zipfile
 import io
+import japanize_matplotlib  # 日本語文字化け解消用ライブラリ
 
 st.set_page_config(page_title="Narrative Star Map Dashboard", layout="wide")
 
 st.title("✨ 食のナラティブ・インタラクティブ星図ビュワー")
 st.sidebar.header("データと表示設定")
 
-# CSV形式でのアップロードも許可するように変更
 uploaded_fixed = st.sidebar.file_uploader("ナラティブ/座標データ (Excel または CSV)", type=["xlsx", "xls", "csv"])
 uploaded_demo = st.sidebar.file_uploader("イベント参加者データ (CSV)", type=["csv"])
 
-# 破損したエクセルファイルを自動修復する関数
 def load_excel_safe(uploaded_file):
     try:
         return pd.ExcelFile(uploaded_file)
     except Exception as e:
         if "stylesheet" in str(e).lower() or "invalid xml" in str(e).lower():
-            # 破損したスタイルシート(XML)を空の安全なものに置き換えてメモリ上で自動修復
             uploaded_file.seek(0)
             safe_io = io.BytesIO()
             with zipfile.ZipFile(uploaded_file, 'r') as zin:
@@ -40,7 +37,6 @@ def load_excel_safe(uploaded_file):
 
 if uploaded_fixed and uploaded_demo:
     try:
-        # CSVかExcelかで読み込み処理を分岐
         if uploaded_fixed.name.endswith('.csv'):
             df_fixed = pd.read_csv(uploaded_fixed)
         else:
@@ -56,7 +52,6 @@ if uploaded_fixed and uploaded_demo:
             
         df_demo = pd.read_csv(uploaded_demo)
         
-        # 座標の有無をチェック
         cols_lower = [str(c).lower() for c in df_fixed.columns]
         has_precomputed_coords = any('x' in c for c in cols_lower) and any('y' in c for c in cols_lower)
         
@@ -93,63 +88,98 @@ if uploaded_fixed and uploaded_demo:
         my_card_col = [c for c in df_demo.columns if 'my' in c.lower() or '選んだ' in c][0]
         interest_col = [c for c in df_demo.columns if 'interest' in c.lower() or '関心' in c][0]
         
-        selected_group = st.sidebar.selectbox("表示するグループを選択", sorted(df_demo[group_col].unique()))
+        # --- UIコントロールの追加 ---
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("表示モードの選択")
         
+        # グループを選択しない（背景のみ）オプションを追加
+        group_options = ["（グループを選択しない：星図のみ）"] + sorted(df_demo[group_col].unique().tolist())
+        selected_group = st.sidebar.selectbox("表示する対象", group_options)
+        
+        show_solid = st.sidebar.checkbox("実線（自分の星座）を表示する", value=True)
+        show_dotted = st.sidebar.checkbox("点線（他者への関心）を表示する", value=True)
+        show_labels = st.sidebar.checkbox("カードのタイトル（星の名前）を表示する", value=True)
+        
+        # 描画処理
         plt.style.use('dark_background')
         fig, ax = plt.subplots(figsize=(12, 12))
         
+        # 背景の星図（全グループ共通）
         ax.scatter(df_coords['X'], df_coords['Y'], c='#FFFFFF', alpha=0.3, s=22, edgecolors='none', zorder=1)
         
-        group_data = df_demo[df_demo[group_col] == selected_group]
-        colors = ['#FF0D0D', '#1E90FF', '#FFD700', '#00FF66', '#FF1493', '#00FFFF']
-        
-        def clean_card_string(s):
-            if pd.isna(s) or str(s).strip() in ['', 'なし']:
-                return []
-            cleaned = re.sub(r'[\[\]]', '', str(s))
-            return [int(float(c.strip())) for c in cleaned.split(',') if c.strip().replace('.0','').isdigit()]
+        # グループが選択されている場合のみ線をプロット
+        if selected_group != "（グループを選択しない：星図のみ）":
+            group_data = df_demo[df_demo[group_col] == selected_group]
+            colors = ['#FF0D0D', '#1E90FF', '#FFD700', '#00FF66', '#FF1493', '#00FFFF']
+            
+            def clean_card_string(s):
+                if pd.isna(s) or str(s).strip() in ['', 'なし']:
+                    return []
+                cleaned = re.sub(r'[\[\]]', '', str(s))
+                return [int(float(c.strip())) for c in cleaned.split(',') if c.strip().replace('.0','').isdigit()]
 
-        related_card_nos = set()
-        for idx, (_, row) in enumerate(group_data.iterrows()):
-            color = colors[idx % len(colors)]
-            p_id = row[part_col]
-            my_cards = clean_card_string(row[my_card_col])
-            interest_cards = clean_card_string(row[interest_col])
-            
-            related_card_nos.update(my_cards)
-            related_card_nos.update(interest_cards)
-            
-            my_x = [coords_dict[c]['X'] for c in my_cards if c in coords_dict]
-            my_y = [coords_dict[c]['Y'] for c in my_cards if c in coords_dict]
-            if not my_x: continue
-            
-            cx, cy = np.mean(my_x), np.mean(my_y)
-            ax.scatter([cx], [cy], c=color, marker='D', s=350, edgecolor='white', linewidth=1.5, zorder=6, label=str(p_id))
-            
-            for x, y in zip(my_x, my_y):
-                ax.plot([cx, x], [cy, y], color=color, linestyle='-', linewidth=4.0, alpha=0.9, zorder=4)
-                ax.scatter([x], [y], c=color, marker='o', s=160, edgecolor='white', linewidth=1.2, zorder=5)
+            related_card_nos = set()
+            for idx, (_, row) in enumerate(group_data.iterrows()):
+                color = colors[idx % len(colors)]
+                p_id = row[part_col]
+                my_cards = clean_card_string(row[my_card_col])
+                interest_cards = clean_card_string(row[interest_col])
                 
-            for c in interest_cards:
-                if c in coords_dict:
-                    ix, iy = coords_dict[c]['X'], coords_dict[c]['Y']
-                    ax.annotate("", xy=(ix, iy), xytext=(cx, cy),
-                                arrowprops=dict(arrowstyle="-|>", color=color, linestyle=":", linewidth=2.0, alpha=0.75, shrinkA=10, shrinkB=10),
-                                zorder=3)
-                    ax.scatter([ix], [iy], facecolors='none', edgecolors=color, marker='o', s=240, linewidth=2.0, zorder=2)
+                # 線の表示設定に応じて関連カードを収集
+                if show_solid: related_card_nos.update(my_cards)
+                if show_dotted: related_card_nos.update(interest_cards)
+                
+                my_x = [coords_dict[c]['X'] for c in my_cards if c in coords_dict]
+                my_y = [coords_dict[c]['Y'] for c in my_cards if c in coords_dict]
+                if not my_x: continue
+                
+                cx, cy = np.mean(my_x), np.mean(my_y)
+                
+                # 実線がオンの場合、または点線のみの場合でも現在地（ひし形）は表示
+                if show_solid or show_dotted:
+                    ax.scatter([cx], [cy], c=color, marker='D', s=350, edgecolor='white', linewidth=1.5, zorder=6, label=str(p_id))
+                
+                # 実線の描画
+                if show_solid:
+                    for x, y in zip(my_x, my_y):
+                        ax.plot([cx, x], [cy, y], color=color, linestyle='-', linewidth=4.0, alpha=0.9, zorder=4)
+                        ax.scatter([x], [y], c=color, marker='o', s=160, edgecolor='white', linewidth=1.2, zorder=5)
+                
+                # 点線の描画
+                if show_dotted:
+                    for c in interest_cards:
+                        if c in coords_dict:
+                            ix, iy = coords_dict[c]['X'], coords_dict[c]['Y']
+                            ax.annotate("", xy=(ix, iy), xytext=(cx, cy),
+                                        arrowprops=dict(arrowstyle="-|>", color=color, linestyle=":", linewidth=2.0, alpha=0.75, shrinkA=10, shrinkB=10),
+                                        zorder=3)
+                            ax.scatter([ix], [iy], facecolors='none', edgecolors=color, marker='o', s=240, linewidth=2.0, zorder=2)
 
-        for c_no in related_card_nos:
-            if c_no in coords_dict:
-                c_info = coords_dict[c_no]
-                ax.text(c_info['X'] + 0.05, c_info['Y'] + 0.03, f"{int(c_no)}. {c_info['見出し']}", 
-                        color='#EFEFEF', fontsize=9, alpha=0.9,
-                        bbox=dict(facecolor='#030305', alpha=0.75, edgecolor='none', boxstyle='round,pad=0.25'), zorder=10)
+            # タイトルの表示
+            if show_labels:
+                for c_no in related_card_nos:
+                    if c_no in coords_dict:
+                        c_info = coords_dict[c_no]
+                        ax.text(c_info['X'] + 0.05, c_info['Y'] + 0.03, f"{int(c_no)}. {c_info['見出し']}", 
+                                color='#EFEFEF', fontsize=9, alpha=0.9,
+                                bbox=dict(facecolor='#030305', alpha=0.75, edgecolor='none', boxstyle='round,pad=0.25'), zorder=10)
+            
+            ax.set_title(f'Interactive Star Map: {selected_group}', fontsize=18, color='white', pad=25)
+            ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), title="Participants", fontsize=11)
+            
+        else:
+            # グループなし（星図のみ）の場合
+            ax.set_title('Interactive Star Map: 全体星図', fontsize=18, color='white', pad=25)
+            # 背景のみの場合は、すべてのタイトルを表示するか選択
+            if show_labels:
+                for c_no, c_info in coords_dict.items():
+                    ax.text(c_info['X'] + 0.02, c_info['Y'] + 0.02, f"{int(c_no)}", 
+                            color='#888888', fontsize=7, alpha=0.6, zorder=10)
 
-        ax.set_title(f'Interactive Star Map: {selected_group}', fontsize=18, color='white', pad=25)
+        # 座標の固定と軸の非表示
         ax.set_xlim(df_coords['X'].min() - 0.3, df_coords['X'].max() + 0.3)
         ax.set_ylim(df_coords['Y'].min() - 0.3, df_coords['Y'].max() + 0.3)
         ax.axis('off')
-        ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), title="Participants", fontsize=11)
         
         st.pyplot(fig)
         
