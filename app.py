@@ -24,13 +24,7 @@ st.sidebar.header("データと表示設定")
 
 uploaded_fixed = st.sidebar.file_uploader("ナラティブ/座標データ (Excel または CSV)", type=["xlsx", "xls", "csv"])
 uploaded_demo = st.sidebar.file_uploader("イベント参加者データ (CSV)", type=["csv"])
-
-# ▼ 事前にAI等で生成したグループ概況テキスト（ここに生成結果を貼り付けます）
-GROUP_SUMMARIES = {
-    "G01": "地元の恵みや、誰かと分かち合う時間を大切にする傾向があります。食を通じたコミュニティ形成や安心感に強く惹かれるグループです。",
-    "G02": "新しい出会いや五感を開く体験に強い関心を示しています。食の冒険や、非日常的なワクワク感を共有することで盛り上がる傾向があります。",
-    # ※データに合わせて後ほどここを書き換えます
-}
+uploaded_summary = st.sidebar.file_uploader("グループ概況文データ (CSV) ※任意", type=["csv"]) # ★新規追加
 
 def load_excel_safe(uploaded_file):
     try:
@@ -61,6 +55,13 @@ if uploaded_fixed and uploaded_demo:
             df_fixed = pd.read_excel(xl, sheet_name=target_sheet)
             
         df_demo = pd.read_csv(uploaded_demo)
+        
+        # 概況文CSVがアップロードされている場合は読み込む
+        summary_dict = {}
+        if uploaded_summary:
+            df_sum = pd.read_csv(uploaded_summary)
+            if 'Group' in df_sum.columns and 'Summary' in df_sum.columns:
+                summary_dict = pd.Series(df_sum['Summary'].values, index=df_sum['Group']).to_dict()
         
         cols_lower = [str(c).lower() for c in df_fixed.columns]
         has_precomputed_coords = any('x' in c for c in cols_lower) and any('y' in c for c in cols_lower)
@@ -122,12 +123,12 @@ if uploaded_fixed and uploaded_demo:
         show_solid = st.sidebar.checkbox("実線（自分の星座）を表示する", value=True)
         show_dotted = st.sidebar.checkbox("点線（他者への関心）を表示する", value=True)
         show_labels = st.sidebar.checkbox("カードのタイトル（星の名前）を表示する", value=True)
-        show_hearts = st.sidebar.checkbox("他者からの関心(♥)を表示する", value=True) # ★新規追加
+        show_hearts = st.sidebar.checkbox("他者からの関心(♥)を表示する", value=True)
         
-        # ▼ グループ概況テキストの表示
+        # ▼ グループ概況テキストの表示（CSVから動的に取得）
         if selected_group != "（グループを選択しない：星図のみ）":
-            summary_text = GROUP_SUMMARIES.get(selected_group, "このグループの概況テキストはまだ設定されていません。")
-            st.info(f"**【{selected_group} の特徴】**\n\n{summary_text}")
+            summary_text = summary_dict.get(selected_group, "このグループの概況文ファイル（CSV）がアップロードされていないか、該当グループのデータがありません。")
+            st.info(f"**【{selected_group} の特徴・概況】**\n\n{summary_text}")
         
         # 描画処理
         plt.style.use('dark_background')
@@ -178,16 +179,13 @@ if uploaded_fixed and uploaded_demo:
             
         else:
             ax.set_title('Interactive Star Map: 全体星図', fontsize=20, color='white', pad=25, fontproperties=jp_font)
-            # 全体表示のときは全ての星をrelatedに
             related_card_nos = set(coords_dict.keys())
 
         # ▼ タイトルとハート(♥)の描画
         for c_no in related_card_nos:
             if c_no in coords_dict:
                 c_info = coords_dict[c_no]
-                # 星の名前（タイトル）
                 if show_labels:
-                    # 全体表示のときは番号のみ、グループ表示のときはタイトル付き
                     label_text = f"{int(c_no)}" if selected_group == "（グループを選択しない：星図のみ）" else f"{int(c_no)}. {c_info['見出し']}"
                     label_size = 7 if selected_group == "（グループを選択しない：星図のみ）" else 10
                     bbox_style = None if selected_group == "（グループを選択しない：星図のみ）" else dict(facecolor='#030305', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.25')
@@ -196,10 +194,8 @@ if uploaded_fixed and uploaded_demo:
                             color='#EFEFEF', fontsize=label_size, alpha=0.95, fontproperties=jp_font,
                             bbox=bbox_style, zorder=10)
                 
-                # ハート(♥)の表示
                 if show_hearts and c_no in interest_map:
                     heart_count = len(interest_map[c_no])
-                    # 星の少し左上にピンク色のハートを描画
                     ax.text(c_info['X'] - 0.12, c_info['Y'] + 0.08, f"♥ {heart_count}", 
                             color='#FF69B4', fontsize=12, fontweight='bold', fontproperties=jp_font, zorder=11)
 
@@ -209,7 +205,7 @@ if uploaded_fixed and uploaded_demo:
         
         st.pyplot(fig)
         
-        # ▼ 星図の下に「関心の詳細データ表」を表示
+        # ▼ 関心の詳細データ表
         if show_hearts and selected_group != "（グループを選択しない：星図のみ）":
             st.markdown("### 💖 このグループの対話で関心を集めた星の詳細")
             interest_data = []
@@ -231,4 +227,4 @@ if uploaded_fixed and uploaded_demo:
     except Exception as e:
         st.error(f"データの処理中にエラーが発生しました: {e}")
 else:
-    st.info("左側のサイドバーから「ナラティブ/座標データ（Excel または CSV）」と「イベント参加者データ（CSV）」をアップロードしてください。")
+    st.info("左側のサイドバーから「ナラティブ/座標データ」「イベント参加者データ」、および「グループ概況文データ（CSV）」をアップロードしてください。")
