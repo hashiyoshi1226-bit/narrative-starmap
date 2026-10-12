@@ -10,11 +10,11 @@ import os
 import urllib.request
 import matplotlib.font_manager as fm
 
-# --- 日本語フォントの自動ダウンロードと設定 ---
-font_path = "NotoSansJP-Regular.ttf"
+# --- 日本語フォントの自動ダウンロードと設定（安定版） ---
+font_path = "ipaexg.ttf"
 if not os.path.exists(font_path):
-    # Googleフォントから直接ダウンロード
-    font_url = "https://github.com/google/fonts/raw/main/ofl/notosansjp/NotoSansJP-Regular.ttf"
+    # 絶対にリンク切れしない安定したリポジトリからフォントを取得
+    font_url = "https://raw.githubusercontent.com/uehara1414/japanize-matplotlib/master/japanize_matplotlib/fonts/ipaexg.ttf"
     urllib.request.urlretrieve(font_url, font_path)
 jp_font = fm.FontProperties(fname=font_path)
 
@@ -98,11 +98,10 @@ if uploaded_fixed and uploaded_demo:
         my_card_col = [c for c in df_demo.columns if 'my' in c.lower() or '選んだ' in c][0]
         interest_col = [c for c in df_demo.columns if 'interest' in c.lower() or '関心' in c][0]
         
-        # --- UIコントロールの追加 ---
+        # --- UIコントロール ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("表示モードの選択")
         
-        # グループを選択しない（背景のみ）オプションを追加
         group_options = ["（グループを選択しない：星図のみ）"] + sorted(df_demo[group_col].unique().tolist())
         selected_group = st.sidebar.selectbox("表示する対象", group_options)
         
@@ -114,10 +113,8 @@ if uploaded_fixed and uploaded_demo:
         plt.style.use('dark_background')
         fig, ax = plt.subplots(figsize=(13, 13))
         
-        # 背景の星図（全グループ共通）
         ax.scatter(df_coords['X'], df_coords['Y'], c='#FFFFFF', alpha=0.3, s=22, edgecolors='none', zorder=1)
         
-        # グループが選択されている場合のみ線をプロット
         if selected_group != "（グループを選択しない：星図のみ）":
             group_data = df_demo[df_demo[group_col] == selected_group]
             colors = ['#FF0D0D', '#1E90FF', '#FFD700', '#00FF66', '#FF1493', '#00FFFF']
@@ -135,7 +132,6 @@ if uploaded_fixed and uploaded_demo:
                 my_cards = clean_card_string(row[my_card_col])
                 interest_cards = clean_card_string(row[interest_col])
                 
-                # 線の表示設定に応じて関連カードを収集
                 if show_solid: related_card_nos.update(my_cards)
                 if show_dotted: related_card_nos.update(interest_cards)
                 
@@ -145,17 +141,14 @@ if uploaded_fixed and uploaded_demo:
                 
                 cx, cy = np.mean(my_x), np.mean(my_y)
                 
-                # 実線がオンの場合、または点線のみの場合でも現在地（ひし形）は表示
                 if show_solid or show_dotted:
                     ax.scatter([cx], [cy], c=color, marker='D', s=350, edgecolor='white', linewidth=1.5, zorder=6, label=str(p_id))
                 
-                # 実線の描画
                 if show_solid:
                     for x, y in zip(my_x, my_y):
                         ax.plot([cx, x], [cy, y], color=color, linestyle='-', linewidth=4.0, alpha=0.9, zorder=4)
                         ax.scatter([x], [y], c=color, marker='o', s=160, edgecolor='white', linewidth=1.2, zorder=5)
                 
-                # 点線の描画
                 if show_dotted:
                     for c in interest_cards:
                         if c in coords_dict:
@@ -165,29 +158,24 @@ if uploaded_fixed and uploaded_demo:
                                         zorder=3)
                             ax.scatter([ix], [iy], facecolors='none', edgecolors=color, marker='o', s=240, linewidth=2.0, zorder=2)
 
-            # タイトルの表示
             if show_labels:
                 for c_no in related_card_nos:
                     if c_no in coords_dict:
                         c_info = coords_dict[c_no]
-                        # fontproperties=jp_font で日本語フォントを明示的に指定
                         ax.text(c_info['X'] + 0.05, c_info['Y'] + 0.03, f"{int(c_no)}. {c_info['見出し']}", 
-                                color='#EFEFEF', fontsize=9, alpha=0.9, fontproperties=jp_font,
-                                bbox=dict(facecolor='#030305', alpha=0.75, edgecolor='none', boxstyle='round,pad=0.25'), zorder=10)
+                                color='#EFEFEF', fontsize=10, alpha=0.95, fontproperties=jp_font,
+                                bbox=dict(facecolor='#030305', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.25'), zorder=10)
             
-            ax.set_title(f'Interactive Star Map: {selected_group}', fontsize=18, color='white', pad=25, fontproperties=jp_font)
+            ax.set_title(f'Interactive Star Map: {selected_group}', fontsize=20, color='white', pad=25, fontproperties=jp_font)
             ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), title="Participants", prop=jp_font)
             
         else:
-            # グループなし（星図のみ）の場合
-            ax.set_title('Interactive Star Map: 全体星図', fontsize=18, color='white', pad=25, fontproperties=jp_font)
-            # 背景のみの場合は、すべてのタイトルを表示するか選択
+            ax.set_title('Interactive Star Map: 全体星図', fontsize=20, color='white', pad=25, fontproperties=jp_font)
             if show_labels:
                 for c_no, c_info in coords_dict.items():
                     ax.text(c_info['X'] + 0.02, c_info['Y'] + 0.02, f"{int(c_no)}", 
-                            color='#888888', fontsize=7, alpha=0.6, fontproperties=jp_font, zorder=10)
+                            color='#888888', fontsize=8, alpha=0.6, fontproperties=jp_font, zorder=10)
 
-        # 座標の固定と軸の非表示
         ax.set_xlim(df_coords['X'].min() - 0.3, df_coords['X'].max() + 0.3)
         ax.set_ylim(df_coords['Y'].min() - 0.3, df_coords['Y'].max() + 0.3)
         ax.axis('off')
