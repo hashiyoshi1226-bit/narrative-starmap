@@ -10,10 +10,9 @@ import os
 import urllib.request
 import matplotlib.font_manager as fm
 
-# --- 日本語フォントの自動ダウンロードと設定（安定版） ---
+# --- 日本語フォント設定 ---
 font_path = "ipaexg.ttf"
 if not os.path.exists(font_path):
-    # 絶対にリンク切れしない安定したリポジトリからフォントを取得
     font_url = "https://raw.githubusercontent.com/uehara1414/japanize-matplotlib/master/japanize_matplotlib/fonts/ipaexg.ttf"
     urllib.request.urlretrieve(font_url, font_path)
 jp_font = fm.FontProperties(fname=font_path)
@@ -25,6 +24,13 @@ st.sidebar.header("データと表示設定")
 
 uploaded_fixed = st.sidebar.file_uploader("ナラティブ/座標データ (Excel または CSV)", type=["xlsx", "xls", "csv"])
 uploaded_demo = st.sidebar.file_uploader("イベント参加者データ (CSV)", type=["csv"])
+
+# ▼ 事前にAI等で生成したグループ概況テキスト（ここに生成結果を貼り付けます）
+GROUP_SUMMARIES = {
+    "G01": "地元の恵みや、誰かと分かち合う時間を大切にする傾向があります。食を通じたコミュニティ形成や安心感に強く惹かれるグループです。",
+    "G02": "新しい出会いや五感を開く体験に強い関心を示しています。食の冒険や、非日常的なワクワク感を共有することで盛り上がる傾向があります。",
+    # ※データに合わせて後ほどここを書き換えます
+}
 
 def load_excel_safe(uploaded_file):
     try:
@@ -51,13 +57,7 @@ if uploaded_fixed and uploaded_demo:
             df_fixed = pd.read_csv(uploaded_fixed)
         else:
             xl = load_excel_safe(uploaded_fixed)
-            target_sheet = None
-            for s in xl.sheet_names:
-                if 'coordinate' in s.lower() or 'coord' in s.lower() or 'データ' in s or '座標' in s or 'sheet' in s.lower():
-                    target_sheet = s
-                    break
-            if not target_sheet:
-                target_sheet = xl.sheet_names[0]
+            target_sheet = next((s for s in xl.sheet_names if 'coordinate' in s.lower() or 'coord' in s.lower() or 'データ' in s or '座標' in s or 'sheet' in s.lower()), xl.sheet_names[0])
             df_fixed = pd.read_excel(xl, sheet_name=target_sheet)
             
         df_demo = pd.read_csv(uploaded_demo)
@@ -97,8 +97,22 @@ if uploaded_fixed and uploaded_demo:
         part_col = [c for c in df_demo.columns if 'part' in c.lower() or '参加者' in c or 'id' in c.lower()][0]
         my_card_col = [c for c in df_demo.columns if 'my' in c.lower() or '選んだ' in c][0]
         interest_col = [c for c in df_demo.columns if 'interest' in c.lower() or '関心' in c][0]
+
+        def clean_card_string(s):
+            if pd.isna(s) or str(s).strip() in ['', 'なし']:
+                return []
+            cleaned = re.sub(r'[\[\]]', '', str(s))
+            return [int(float(c.strip())) for c in cleaned.split(',') if c.strip().replace('.0','').isdigit()]
+
+        # --- 全体の「関心（ハート）」の集計 ---
+        interest_map = {}
+        for _, row in df_demo.iterrows():
+            interests = clean_card_string(row[interest_col])
+            for c in interests:
+                if c not in interest_map:
+                    interest_map[c] = []
+                interest_map[c].append(f"{row[group_col]} {row[part_col]}")
         
-        # --- UIコントロール ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("表示モードの選択")
         
@@ -108,6 +122,12 @@ if uploaded_fixed and uploaded_demo:
         show_solid = st.sidebar.checkbox("実線（自分の星座）を表示する", value=True)
         show_dotted = st.sidebar.checkbox("点線（他者への関心）を表示する", value=True)
         show_labels = st.sidebar.checkbox("カードのタイトル（星の名前）を表示する", value=True)
+        show_hearts = st.sidebar.checkbox("他者からの関心(♥)を表示する", value=True) # ★新規追加
+        
+        # ▼ グループ概況テキストの表示
+        if selected_group != "（グループを選択しない：星図のみ）":
+            summary_text = GROUP_SUMMARIES.get(selected_group, "このグループの概況テキストはまだ設定されていません。")
+            st.info(f"**【{selected_group} の特徴】**\n\n{summary_text}")
         
         # 描画処理
         plt.style.use('dark_background')
@@ -115,17 +135,12 @@ if uploaded_fixed and uploaded_demo:
         
         ax.scatter(df_coords['X'], df_coords['Y'], c='#FFFFFF', alpha=0.3, s=22, edgecolors='none', zorder=1)
         
+        related_card_nos = set()
+        
         if selected_group != "（グループを選択しない：星図のみ）":
             group_data = df_demo[df_demo[group_col] == selected_group]
             colors = ['#FF0D0D', '#1E90FF', '#FFD700', '#00FF66', '#FF1493', '#00FFFF']
             
-            def clean_card_string(s):
-                if pd.isna(s) or str(s).strip() in ['', 'なし']:
-                    return []
-                cleaned = re.sub(r'[\[\]]', '', str(s))
-                return [int(float(c.strip())) for c in cleaned.split(',') if c.strip().replace('.0','').isdigit()]
-
-            related_card_nos = set()
             for idx, (_, row) in enumerate(group_data.iterrows()):
                 color = colors[idx % len(colors)]
                 p_id = row[part_col]
@@ -158,29 +173,60 @@ if uploaded_fixed and uploaded_demo:
                                         zorder=3)
                             ax.scatter([ix], [iy], facecolors='none', edgecolors=color, marker='o', s=240, linewidth=2.0, zorder=2)
 
-            if show_labels:
-                for c_no in related_card_nos:
-                    if c_no in coords_dict:
-                        c_info = coords_dict[c_no]
-                        ax.text(c_info['X'] + 0.05, c_info['Y'] + 0.03, f"{int(c_no)}. {c_info['見出し']}", 
-                                color='#EFEFEF', fontsize=10, alpha=0.95, fontproperties=jp_font,
-                                bbox=dict(facecolor='#030305', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.25'), zorder=10)
-            
             ax.set_title(f'Interactive Star Map: {selected_group}', fontsize=20, color='white', pad=25, fontproperties=jp_font)
             ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), title="Participants", prop=jp_font)
             
         else:
             ax.set_title('Interactive Star Map: 全体星図', fontsize=20, color='white', pad=25, fontproperties=jp_font)
-            if show_labels:
-                for c_no, c_info in coords_dict.items():
-                    ax.text(c_info['X'] + 0.02, c_info['Y'] + 0.02, f"{int(c_no)}", 
-                            color='#888888', fontsize=8, alpha=0.6, fontproperties=jp_font, zorder=10)
+            # 全体表示のときは全ての星をrelatedに
+            related_card_nos = set(coords_dict.keys())
+
+        # ▼ タイトルとハート(♥)の描画
+        for c_no in related_card_nos:
+            if c_no in coords_dict:
+                c_info = coords_dict[c_no]
+                # 星の名前（タイトル）
+                if show_labels:
+                    # 全体表示のときは番号のみ、グループ表示のときはタイトル付き
+                    label_text = f"{int(c_no)}" if selected_group == "（グループを選択しない：星図のみ）" else f"{int(c_no)}. {c_info['見出し']}"
+                    label_size = 7 if selected_group == "（グループを選択しない：星図のみ）" else 10
+                    bbox_style = None if selected_group == "（グループを選択しない：星図のみ）" else dict(facecolor='#030305', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.25')
+                    
+                    ax.text(c_info['X'] + 0.05, c_info['Y'] + 0.03, label_text, 
+                            color='#EFEFEF', fontsize=label_size, alpha=0.95, fontproperties=jp_font,
+                            bbox=bbox_style, zorder=10)
+                
+                # ハート(♥)の表示
+                if show_hearts and c_no in interest_map:
+                    heart_count = len(interest_map[c_no])
+                    # 星の少し左上にピンク色のハートを描画
+                    ax.text(c_info['X'] - 0.12, c_info['Y'] + 0.08, f"♥ {heart_count}", 
+                            color='#FF69B4', fontsize=12, fontweight='bold', fontproperties=jp_font, zorder=11)
 
         ax.set_xlim(df_coords['X'].min() - 0.3, df_coords['X'].max() + 0.3)
         ax.set_ylim(df_coords['Y'].min() - 0.3, df_coords['Y'].max() + 0.3)
         ax.axis('off')
         
         st.pyplot(fig)
+        
+        # ▼ 星図の下に「関心の詳細データ表」を表示
+        if show_hearts and selected_group != "（グループを選択しない：星図のみ）":
+            st.markdown("### 💖 このグループの対話で関心を集めた星の詳細")
+            interest_data = []
+            for c_no in sorted(list(related_card_nos)):
+                if c_no in interest_map:
+                    c_info = coords_dict[c_no]
+                    interest_data.append({
+                        "No": int(c_no),
+                        "星のタイトル": c_info['見出し'],
+                        "関心の数 (♥)": len(interest_map[c_no]),
+                        "関心を寄せた人": ", ".join(interest_map[c_no])
+                    })
+            
+            if interest_data:
+                st.dataframe(pd.DataFrame(interest_data), use_container_width=True)
+            else:
+                st.info("現在表示されている星には、まだ関心が寄せられていません。")
         
     except Exception as e:
         st.error(f"データの処理中にエラーが発生しました: {e}")
