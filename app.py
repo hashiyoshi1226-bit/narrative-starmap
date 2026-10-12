@@ -6,7 +6,17 @@ from sklearn.manifold import MDS
 import re
 import zipfile
 import io
-import japanize_matplotlib  # 日本語文字化け解消用ライブラリ
+import os
+import urllib.request
+import matplotlib.font_manager as fm
+
+# --- 日本語フォントの自動ダウンロードと設定 ---
+font_path = "NotoSansJP-Regular.ttf"
+if not os.path.exists(font_path):
+    # Googleフォントから直接ダウンロード
+    font_url = "https://github.com/google/fonts/raw/main/ofl/notosansjp/NotoSansJP-Regular.ttf"
+    urllib.request.urlretrieve(font_url, font_path)
+jp_font = fm.FontProperties(fname=font_path)
 
 st.set_page_config(page_title="Narrative Star Map Dashboard", layout="wide")
 
@@ -102,7 +112,7 @@ if uploaded_fixed and uploaded_demo:
         
         # 描画処理
         plt.style.use('dark_background')
-        fig, ax = plt.subplots(figsize=(12, 12))
+        fig, ax = plt.subplots(figsize=(13, 13))
         
         # 背景の星図（全グループ共通）
         ax.scatter(df_coords['X'], df_coords['Y'], c='#FFFFFF', alpha=0.3, s=22, edgecolors='none', zorder=1)
@@ -160,21 +170,22 @@ if uploaded_fixed and uploaded_demo:
                 for c_no in related_card_nos:
                     if c_no in coords_dict:
                         c_info = coords_dict[c_no]
+                        # fontproperties=jp_font で日本語フォントを明示的に指定
                         ax.text(c_info['X'] + 0.05, c_info['Y'] + 0.03, f"{int(c_no)}. {c_info['見出し']}", 
-                                color='#EFEFEF', fontsize=9, alpha=0.9,
+                                color='#EFEFEF', fontsize=9, alpha=0.9, fontproperties=jp_font,
                                 bbox=dict(facecolor='#030305', alpha=0.75, edgecolor='none', boxstyle='round,pad=0.25'), zorder=10)
             
-            ax.set_title(f'Interactive Star Map: {selected_group}', fontsize=18, color='white', pad=25)
-            ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), title="Participants", fontsize=11)
+            ax.set_title(f'Interactive Star Map: {selected_group}', fontsize=18, color='white', pad=25, fontproperties=jp_font)
+            ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), title="Participants", prop=jp_font)
             
         else:
             # グループなし（星図のみ）の場合
-            ax.set_title('Interactive Star Map: 全体星図', fontsize=18, color='white', pad=25)
+            ax.set_title('Interactive Star Map: 全体星図', fontsize=18, color='white', pad=25, fontproperties=jp_font)
             # 背景のみの場合は、すべてのタイトルを表示するか選択
             if show_labels:
                 for c_no, c_info in coords_dict.items():
                     ax.text(c_info['X'] + 0.02, c_info['Y'] + 0.02, f"{int(c_no)}", 
-                            color='#888888', fontsize=7, alpha=0.6, zorder=10)
+                            color='#888888', fontsize=7, alpha=0.6, fontproperties=jp_font, zorder=10)
 
         # 座標の固定と軸の非表示
         ax.set_xlim(df_coords['X'].min() - 0.3, df_coords['X'].max() + 0.3)
