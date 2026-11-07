@@ -1,30 +1,21 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 from sklearn.manifold import MDS
 import re
 import zipfile
 import io
 import os
-import urllib.request
-import matplotlib.font_manager as fm
 
-# --- 日本語フォント設定 ---
-font_path = "ipaexg.ttf"
-if not os.path.exists(font_path):
-    font_url = "https://raw.githubusercontent.com/uehara1414/japanize-matplotlib/master/japanize_matplotlib/fonts/ipaexg.ttf"
-    urllib.request.urlretrieve(font_url, font_path)
-jp_font = fm.FontProperties(fname=font_path)
+st.set_page_config(page_title="Narrative Star Map Dashboard (2D Plotly)", layout="wide")
 
-st.set_page_config(page_title="Narrative Star Map Dashboard", layout="wide")
-
-st.title("✨ 食のナラティブ・インタラクティブ星図ビュワー")
+st.title("✨ 食のナラティブ・インタラクティブ星図ビュワー (2D版)")
 st.sidebar.header("データと表示設定")
 
 uploaded_fixed = st.sidebar.file_uploader("ナラティブ/座標データ (Excel または CSV)", type=["xlsx", "xls", "csv"])
 uploaded_demo = st.sidebar.file_uploader("イベント参加者データ (CSV)", type=["csv"])
-uploaded_summary = st.sidebar.file_uploader("グループ概況文データ (CSV) ※任意", type=["csv"]) # ★新規追加
+uploaded_summary = st.sidebar.file_uploader("グループ概況文データ (CSV) ※任意", type=["csv"])
 
 def load_excel_safe(uploaded_file):
     try:
@@ -56,7 +47,6 @@ if uploaded_fixed and uploaded_demo:
             
         df_demo = pd.read_csv(uploaded_demo)
         
-        # 概況文CSVがアップロードされている場合は読み込む
         summary_dict = {}
         if uploaded_summary:
             df_sum = pd.read_csv(uploaded_summary)
@@ -105,7 +95,7 @@ if uploaded_fixed and uploaded_demo:
             cleaned = re.sub(r'[\[\]]', '', str(s))
             return [int(float(c.strip())) for c in cleaned.split(',') if c.strip().replace('.0','').isdigit()]
 
-        # --- 全体の「関心（ハート）」の集計 ---
+        # 関心（ハート）の集計
         interest_map = {}
         for _, row in df_demo.iterrows():
             interests = clean_card_string(row[interest_col])
@@ -118,33 +108,59 @@ if uploaded_fixed and uploaded_demo:
         st.sidebar.subheader("表示モードの選択")
         
         group_options = ["（グループを選択しない：星図のみ）"] + sorted(df_demo[group_col].unique().tolist())
-        selected_group = st.sidebar.selectbox("表示する対象", group_options)
+        selected_group = st.sidebar.selectbox("表示するグループ", group_options)
         
+        # ★追加: グループ選択時に、表示する参加者を絞り込めるようにする
+        selected_participants = []
+        if selected_group != "（グループを選択しない：星図のみ）":
+            group_full_data = df_demo[df_demo[group_col] == selected_group]
+            all_parts = sorted(group_full_data[part_col].unique().tolist())
+            selected_participants = st.sidebar.multiselect(
+                "表示する参加者（複数選択可）",
+                options=all_parts,
+                default=all_parts
+            )
+
         show_solid = st.sidebar.checkbox("実線（自分の星座）を表示する", value=True)
         show_dotted = st.sidebar.checkbox("点線（他者への関心）を表示する", value=True)
         show_labels = st.sidebar.checkbox("カードのタイトル（星の名前）を表示する", value=True)
         show_hearts = st.sidebar.checkbox("他者からの関心(♥)を表示する", value=True)
         
-        # ▼ グループ概況テキストの表示（CSVから動的に取得）
         if selected_group != "（グループを選択しない：星図のみ）":
             summary_text = summary_dict.get(selected_group, "このグループの概況文ファイル（CSV）がアップロードされていないか、該当グループのデータがありません。")
             st.info(f"**【{selected_group} の特徴・概況】**\n\n{summary_text}")
         
-        # 描画処理
-        plt.style.use('dark_background')
-        fig, ax = plt.subplots(figsize=(13, 13))
+        # --- Plotlyによる 2D インタラクティブ図の構築 ---
+        fig = go.Figure()
         
-        ax.scatter(df_coords['X'], df_coords['Y'], c='#FFFFFF', alpha=0.3, s=22, edgecolors='none', zorder=1)
+        # 1. 背景の星（全ナラティブ）
+        hover_texts = [f"No.{int(row['No'])}: {row['見出し']}" for _, row in df_coords.iterrows()]
+        fig.add_trace(go.Scatter(
+            x=df_coords['X'],
+            y=df_coords['Y'],
+            mode='markers',
+            marker=dict(size=6, color='#FFFFFF', opacity=0.4),
+            text=hover_texts,
+            hoverinfo='text',
+            name='全ナラティブ',
+            showlegend=False
+        ))
         
-        related_card_nos = set()
-        
-        if selected_group != "（グループを選択しない：星図のみ）":
-            group_data = df_demo[df_demo[group_col] == selected_group]
-            colors = ['#FF0D0D', '#1E90FF', '#FFD700', '#00FF66', '#FF1493', '#00FFFF']
+        # 2. グループごとのプロット・線描画
+        if selected_group != "（グループを選択しない：星図のみ）" and len(selected_participants) > 0:
+            # 参加者を絞り込んだデータを取得
+            group_data = group_full_data[group_full_data[part_col].isin(selected_participants)]
             
-            for idx, (_, row) in enumerate(group_data.iterrows()):
-                color = colors[idx % len(colors)]
+            # ★追加: 参加者ごとの色を固定（絞り込んでも色が変わらないようにする）
+            base_colors = ['#FF0D0D', '#1E90FF', '#FFD700', '#00FF66', '#FF1493', '#00FFFF']
+            color_map = {p: base_colors[i % len(base_colors)] for i, p in enumerate(all_parts)}
+            
+            related_card_nos = set()
+            
+            for _, row in group_data.iterrows():
                 p_id = row[part_col]
+                color = color_map[p_id]
+                
                 my_cards = clean_card_string(row[my_card_col])
                 interest_cards = clean_card_string(row[interest_col])
                 
@@ -157,59 +173,105 @@ if uploaded_fixed and uploaded_demo:
                 
                 cx, cy = np.mean(my_x), np.mean(my_y)
                 
+                # 参加者アイコン
                 if show_solid or show_dotted:
-                    ax.scatter([cx], [cy], c=color, marker='D', s=350, edgecolor='white', linewidth=1.5, zorder=6, label=str(p_id))
+                    fig.add_trace(go.Scatter(
+                        x=[cx], y=[cy],
+                        mode='markers',
+                        marker=dict(size=14, color=color, symbol='diamond', line=dict(color='white', width=1.5)),
+                        name=f"参加者: {p_id}",
+                        hoverinfo='text',
+                        hovertext=f"参加者 ID: {p_id} (グループ: {selected_group})"
+                    ))
                 
+                # 実線（放射状）
                 if show_solid:
-                    for x, y in zip(my_x, my_y):
-                        ax.plot([cx, x], [cy, y], color=color, linestyle='-', linewidth=4.0, alpha=0.9, zorder=4)
-                        ax.scatter([x], [y], c=color, marker='o', s=160, edgecolor='white', linewidth=1.2, zorder=5)
+                    for x, y, c_no in zip(my_x, my_y, my_cards):
+                        fig.add_trace(go.Scatter(
+                            x=[cx, x], y=[cy, y],
+                            mode='lines',
+                            line=dict(color=color, width=3),
+                            opacity=0.8,
+                            showlegend=False,
+                            hoverinfo='none'
+                        ))
+                        c_title = coords_dict.get(c_no, {}).get('見出し', '')
+                        fig.add_trace(go.Scatter(
+                            x=[x], y=[y],
+                            mode='markers',
+                            marker=dict(size=10, color=color, symbol='circle', line=dict(color='white', width=1)),
+                            showlegend=False,
+                            hoverinfo='text',
+                            hovertext=f"[{p_id}の選択カード] No.{c_no} {c_title}"
+                        ))
                 
+                # 点線（関心）
                 if show_dotted:
-                    for c in interest_cards:
-                        if c in coords_dict:
-                            ix, iy = coords_dict[c]['X'], coords_dict[c]['Y']
-                            ax.annotate("", xy=(ix, iy), xytext=(cx, cy),
-                                        arrowprops=dict(arrowstyle="-|>", color=color, linestyle=":", linewidth=2.0, alpha=0.75, shrinkA=10, shrinkB=10),
-                                        zorder=3)
-                            ax.scatter([ix], [iy], facecolors='none', edgecolors=color, marker='o', s=240, linewidth=2.0, zorder=2)
+                    for c_no in interest_cards:
+                        if c_no in coords_dict:
+                            ix, iy = coords_dict[c_no]['X'], coords_dict[c_no]['Y']
+                            c_title = coords_dict[c_no]['見出し']
+                            fig.add_trace(go.Scatter(
+                                x=[cx, ix], y=[cy, iy],
+                                mode='lines',
+                                line=dict(color=color, width=2, dash='dot'),
+                                opacity=0.75,
+                                showlegend=False,
+                                hoverinfo='none'
+                            ))
 
-            ax.set_title(f'Interactive Star Map: {selected_group}', fontsize=20, color='white', pad=25, fontproperties=jp_font)
-            ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), title="Participants", prop=jp_font)
+            # ★改善: ラベル表示（サイズ14、白太字、半透明の黒帯背景を追加して視認性アップ）
+            if show_labels:
+                for c_no in related_card_nos:
+                    if c_no in coords_dict:
+                        c_info = coords_dict[c_no]
+                        fig.add_annotation(
+                            x=c_info['X'] + 0.03,
+                            y=c_info['Y'] + 0.03,
+                            text=f"<b>{int(c_no)}. {c_info['見出し']}</b>",
+                            showarrow=False,
+                            font=dict(size=14, color='#FFFFFF'), # 純白・サイズ14
+                            bgcolor="rgba(0, 0, 0, 0.6)",      # 透過度60%の黒帯背景
+                            bordercolor="rgba(0, 0, 0, 0)",
+                            borderpad=2
+                        )
             
-        else:
-            ax.set_title('Interactive Star Map: 全体星図', fontsize=20, color='white', pad=25, fontproperties=jp_font)
-            related_card_nos = set(coords_dict.keys())
+            # ハート表示
+            if show_hearts:
+                for c_no, voters in interest_map.items():
+                    if c_no in coords_dict:
+                        c_info = coords_dict[c_no]
+                        voters_str = "<br>".join(voters)
+                        fig.add_trace(go.Scatter(
+                            x=[c_info['X'] - 0.08], y=[c_info['Y'] + 0.06],
+                            mode='text',
+                            text=[f"♥ {len(voters)}"],
+                            textfont=dict(size=12, color='#FF69B4', family='Arial Black'),
+                            hoverinfo='text',
+                            hovertext=[f"<b>No.{c_no} {c_info['見出し']}</b><br>関心寄せた人:<br>{voters_str}"],
+                            showlegend=False
+                        ))
 
-        # ▼ タイトルとハート(♥)の描画
-        for c_no in related_card_nos:
-            if c_no in coords_dict:
-                c_info = coords_dict[c_no]
-                if show_labels:
-                    label_text = f"{int(c_no)}" if selected_group == "（グループを選択しない：星図のみ）" else f"{int(c_no)}. {c_info['見出し']}"
-                    label_size = 7 if selected_group == "（グループを選択しない：星図のみ）" else 10
-                    bbox_style = None if selected_group == "（グループを選択しない：星図のみ）" else dict(facecolor='#030305', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.25')
-                    
-                    ax.text(c_info['X'] + 0.05, c_info['Y'] + 0.03, label_text, 
-                            color='#EFEFEF', fontsize=label_size, alpha=0.95, fontproperties=jp_font,
-                            bbox=bbox_style, zorder=10)
-                
-                if show_hearts and c_no in interest_map:
-                    heart_count = len(interest_map[c_no])
-                    ax.text(c_info['X'] - 0.12, c_info['Y'] + 0.08, f"♥ {heart_count}", 
-                            color='#FF69B4', fontsize=12, fontweight='bold', fontproperties=jp_font, zorder=11)
-
-        ax.set_xlim(df_coords['X'].min() - 0.3, df_coords['X'].max() + 0.3)
-        ax.set_ylim(df_coords['Y'].min() - 0.3, df_coords['Y'].max() + 0.3)
-        ax.axis('off')
+        # --- レイアウト調整 ---
+        fig.update_layout(
+            title=dict(text=f'Interactive Star Map: {selected_group}', font=dict(color='white', size=18)),
+            paper_bgcolor='#0E1117',
+            plot_bgcolor='#0E1117',
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            hovermode='closest',
+            height=700,
+            margin=dict(l=20, r=20, t=50, b=20),
+            legend=dict(font=dict(color='white')) # 参加者名（凡例）の文字色を白に
+        )
         
-        st.pyplot(fig)
+        st.plotly_chart(fig, use_container_width=True)
         
-        # ▼ 関心の詳細データ表
+        # 詳細データ表
         if show_hearts and selected_group != "（グループを選択しない：星図のみ）":
             st.markdown("### 💖 このグループの対話で関心を集めた星の詳細")
             interest_data = []
-            for c_no in sorted(list(related_card_nos)):
+            for c_no in coords_dict:
                 if c_no in interest_map:
                     c_info = coords_dict[c_no]
                     interest_data.append({
@@ -218,13 +280,12 @@ if uploaded_fixed and uploaded_demo:
                         "関心の数 (♥)": len(interest_map[c_no]),
                         "関心を寄せた人": ", ".join(interest_map[c_no])
                     })
-            
             if interest_data:
                 st.dataframe(pd.DataFrame(interest_data), use_container_width=True)
             else:
                 st.info("現在表示されている星には、まだ関心が寄せられていません。")
-        
+                
     except Exception as e:
         st.error(f"データの処理中にエラーが発生しました: {e}")
 else:
-    st.info("左側のサイドバーから「ナラティブ/座標データ」「イベント参加者データ」、および「グループ概況文データ（CSV）」をアップロードしてください。")
+    st.info("左側のサイドバーから「ナラティブ/座標データ」「イベント参加者データ」をアップロードしてください。")
